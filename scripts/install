@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+"""Install the staged daemon and XFCE integration, with a restore manifest."""
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parents[1]
+home = Path.home()
+stage = root / "build/stage"
+if not (stage / "bin/librepods").is_file():
+    raise SystemExit("Run scripts/build before installation")
+backup = root / "local/backups" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+backup.mkdir(parents=True, mode=0o700)
+os.chmod(backup.parent.parent, 0o700)
+manifest_path = root / "local/install-manifest.json"
+manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
+
+
+def install_bytes(destination, content, mode=0o644):
+    relative = destination.relative_to(home)
+    entry = next((item for item in manifest if item["path"] == str(destination)), None)
+    if entry is None:
+        previous = None
+        if destination.exists():
+            previous = backup / relative
+            previous.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(destination, previous)
+        entry = {"path": str(destination), "backup": str(previous) if previous else None}
+        manifest.append(entry)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as temporary:
+        temporary.write(content)
+        temporary_path = Path(temporary.name)
+    temporary_path.chmod(mode)
+    temporary_path.replace(destination)
+    entry["sha256"] = hashlib.sha256(content).hexdigest()
+
+
+for source in sorted(stage.rglob("*")):
+    if source.is_file():
+        install_bytes(home / ".local" / source.relative_to(stage), source.read_bytes(),
+                      source.stat().st_mode & 0o777)
+
+# XFCE does not activate graphical-session.target on this machine.
+service = (stage / "share/systemd/user/librepods.service").read_text()
+service = service.replace("After=graphical-session.target\nPartOf=graphical-session.target",
+                          "After=dbus.socket")
+service = service.replace("WantedBy=graphical-session.target", "WantedBy=default.target")
+install_bytes(home / ".local/share/systemd/user/librepods.service", service.encode())
+install_bytes(home / ".local/share/systemd/user/airpods-xfce-tray.service",
+              (root / "src/airpods-xfce-tray.service").read_bytes())
+install_bytes(home / ".local/share/airpods-xfce/airpods_xfce.py",
+              (root / "src/airpods_xfce.py").read_bytes())
+install_bytes(home / ".local/bin/airpods-xfce", (root / "scripts/airpods-xfce").read_bytes(), 0o755)
+
+desktop = ("[Desktop Entry]\nType=Application\nName=AirPods Pro controls\n"
+           "Comment=Battery and listening controls for AirPods\n"
+           f"Exec={home}/.local/bin/airpods-xfce menu\nIcon=librepods\n"
+           "Terminal=false\nCategories=AudioVideo;Audio;\n")
+install_bytes(home / ".local/share/applications/me.kavishdevar.librepods.desktop", desktop.encode())
+autostart = desktop.replace(" menu\n", " start\n") + "OnlyShowIn=XFCE;\n"
+install_bytes(home / ".config/autostart/airpods-xfce.desktop", autostart.encode())
+(backup / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+(root / "local/latest-backup").write_text(str(backup) + "\n")
+subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+print(f"Installed. Restore manifest: {backup / 'manifest.json'}")

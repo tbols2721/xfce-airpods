@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-menu}" in
+    start|menu)
+        systemctl --user import-environment DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP
+        systemctl --user start librepods.service airpods-xfce-tray.service
+        if [[ "${1:-menu}" == menu ]]; then
+            systemctl --user kill --kill-whom=main --signal=USR1 airpods-xfce-tray.service
+        fi
+        ;;
+    status)
+        exec /usr/bin/python3 "$HOME/.local/share/airpods-xfce/airpods_xfce.py" --print-status
+        ;;
+    stop)
+        systemctl --user stop airpods-xfce-tray.service librepods.service
+        ;;
+    *)
+        printf 'Usage: airpods-xfce [start|menu|status|stop]\n' >&2
+        exit 2
+        ;;
+esac

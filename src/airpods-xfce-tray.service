@@ -1,0 +1,12 @@
+[Unit]
+Description=AirPods controls for the XFCE notification area
+Requires=librepods.service
+After=librepods.service
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/python3 %h/.local/share/airpods-xfce/airpods_xfce.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes

@@ -1,0 +1,6 @@
+[submodule "vendor/omarchy-pods"]
+	path = vendor/omarchy-pods
+	url = https://github.com/thisisgm/omarchy-pods.git
+[submodule "vendor/librepods-upstream"]
+	path = vendor/librepods-upstream
+	url = https://github.com/librepods-org/librepods.git

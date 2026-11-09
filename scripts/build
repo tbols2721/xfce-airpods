@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+cmake -S "$root/vendor/omarchy-pods/daemon" -B "$root/build/daemon" \
+    -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build "$root/build/daemon" --parallel 8
+QT_QPA_PLATFORM=offscreen ctest --test-dir "$root/build/daemon" --output-on-failure
+/usr/bin/python3 -m unittest discover -s "$root/tests" -v
+cmake --install "$root/build/daemon" --prefix "$root/build/stage"

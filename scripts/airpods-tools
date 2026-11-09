@@ -1,0 +1,228 @@
+#!/usr/bin/python3
+"""Pair, route, and diagnose AirPods through the onboard MediaTek adapter."""
+import argparse
+import array
+import json
+import math
+import os
+from pathlib import Path
+import re
+import select
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+ONBOARD_USB = ("0489", "e13a")
+AACP_UUID = "74ec2172-0bad-4d01-8f77-997b2be0722a"
+
+
+def run(*arguments, timeout=15):
+    result = subprocess.run(arguments, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or arguments[0])
+    return result.stdout.strip()
+
+
+def objects():
+    import dbus
+    bus = dbus.SystemBus()
+    return dbus.Interface(bus.get_object("org.bluez", "/"),
+                          "org.freedesktop.DBus.ObjectManager").GetManagedObjects()
+
+
+def onboard(managed):
+    for path, interfaces in managed.items():
+        if "org.bluez.Adapter1" not in interfaces:
+            continue
+        controller = str(path).rsplit("/", 1)[1]
+        base = Path("/sys/class/bluetooth") / controller / "device/.."
+        try:
+            identity = ((base / "idVendor").read_text().strip(),
+                        (base / "idProduct").read_text().strip())
+        except OSError:
+            continue
+        if identity == ONBOARD_USB:
+            return str(path), interfaces["org.bluez.Adapter1"]
+    raise RuntimeError("The onboard MediaTek adapter is not available to BlueZ")
+
+
+def airpods():
+    managed = objects()
+    adapter, _ = onboard(managed)
+    devices = [(str(path), interfaces["org.bluez.Device1"])
+               for path, interfaces in managed.items()
+               if "org.bluez.Device1" in interfaces
+               and str(interfaces["org.bluez.Device1"].get("Adapter")) == adapter
+               and AACP_UUID in interfaces["org.bluez.Device1"].get("UUIDs", [])
+               and interfaces["org.bluez.Device1"].get("Paired")]
+    if len(devices) != 1:
+        raise RuntimeError("Expected one paired AirPods device on the onboard adapter")
+    return adapter, *devices[0]
+
+
+def pulse(kind):
+    return json.loads(run("pactl", "-f", "json", "list", kind))
+
+
+def card_for(path):
+    cards = [card for card in pulse("cards")
+             if card.get("properties", {}).get("bluez.path") == path]
+    if len(cards) != 1:
+        raise RuntimeError("The onboard AirPods audio card is not available")
+    return cards[0]
+
+
+def output_for(path, kind):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        candidates = [item for item in pulse(kind)
+                      if item.get("properties", {}).get("bluez.path") == path
+                      and not item["name"].endswith(".monitor")]
+        if len(candidates) == 1:
+            return candidates[0]
+        time.sleep(.1)
+    raise RuntimeError(f"AirPods {kind} did not appear")
+
+
+def configure(mode, codec=None):
+    _, path, _ = airpods()
+    card = card_for(path)
+    profile = "a2dp_sink" if mode == "stereo" else "handsfree_head_unit"
+    if card["active_profile"] != profile:
+        run("pactl", "set-card-profile", card["name"], profile)
+    if codec:
+        handler = "/card/" + card["name"] + "/bluez"
+        available = json.loads(run("pactl", "send-message", handler, "list-codecs"))
+        if codec not in {item["name"] for item in available}:
+            raise RuntimeError("The requested codec is not available for these AirPods")
+        current = json.loads(run("pactl", "send-message", handler, "get-codec"))
+        if current != codec:
+            run("pactl", "send-message", handler, "switch-codec", json.dumps(codec))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                if json.loads(run("pactl", "send-message", handler, "get-codec")) == codec:
+                    break
+            except RuntimeError:
+                pass
+            time.sleep(.1)
+        else:
+            raise RuntimeError("The selected codec was not confirmed")
+    sink = output_for(path, "sinks")
+    run("pactl", "set-default-sink", sink["name"])
+    run("pactl", "set-sink-mute", sink["name"], "0")
+    for stream in pulse("sink-inputs"):
+        run("pactl", "move-sink-input", str(stream["index"]), sink["name"])
+    if mode == "calls":
+        source = output_for(path, "sources")
+        run("pactl", "set-default-source", source["name"])
+        run("pactl", "set-source-mute", source["name"], "0")
+        print("AirPods microphone selected:", source["sample_specification"])
+    print("Onboard AirPods profile selected:", profile)
+
+
+def status():
+    adapter, path, device = airpods()
+    card = card_for(path)
+    report = {"controller": adapter.rsplit("/", 1)[1], "usb_id": "0489:e13a",
+              "paired": bool(device.get("Paired")), "connected": bool(device.get("Connected")),
+              "active_profile": card["active_profile"]}
+    if card["active_profile"] == "a2dp_sink":
+        report["codec"] = json.loads(run("pactl", "send-message", "/card/" + card["name"] + "/bluez", "get-codec"))
+    print(json.dumps(report, indent=2))
+
+
+def meter(seconds):
+    _, path, _ = airpods()
+    source = output_for(path, "sources")
+    run("pactl", "set-source-mute", source["name"], "0")
+    print("Speak normally. Measuring the AirPods microphone; no audio is saved.", flush=True)
+    process = subprocess.Popen(["parec", "--device=" + source["name"], "--raw",
+                                "--format=s16le", "--rate=16000", "--channels=1"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        for second in range(seconds):
+            raw = bytearray()
+            deadline = time.monotonic() + 5
+            while len(raw) < 32000:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise RuntimeError("Timed out waiting for AirPods microphone samples")
+                chunk = os.read(process.stdout.fileno(), 32000 - len(raw))
+                if not chunk:
+                    raise RuntimeError("The microphone returned no samples")
+                raw.extend(chunk)
+            samples = array.array("h", raw)
+            rms = math.sqrt(sum(value * value for value in samples) / len(samples))
+            print(json.dumps({"second": second + 1,
+                              "rms_dbfs": round(20 * math.log10(max(rms, 1) / 32768), 1),
+                              "peak": max(abs(value) for value in samples)}), flush=True)
+    finally:
+        process.terminate()
+        process.communicate(timeout=3)
+
+
+def transport_log(seconds):
+    directory = ROOT / "local"
+    directory.mkdir(parents=True, exist_ok=True)
+    output = directory / ("pulse-transport-" + time.strftime("%Y%m%dT%H%M%S") + ".log")
+    run("pacmd", "set-log-level", "4")
+    try:
+        with output.open("w") as stream:
+            process = subprocess.Popen(["journalctl", "--user", "-u", "pulseaudio.service",
+                                        "-n", "0", "-f", "--no-pager"], stdout=stream)
+            try:
+                process.wait(timeout=seconds)
+            except subprocess.TimeoutExpired:
+                pass
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=3)
+    finally:
+        run("pacmd", "set-log-level", "2")
+    lines = output.read_text().splitlines()
+    matches = [line for line in lines if re.search(r"bitpool|Skipping|underrun|overrun|error|fail", line, re.I)]
+    print("Local diagnostic log:", output)
+    print("Matching transport diagnostic lines:", len(matches))
+    print("\n".join(matches[-25:]))
+
+
+def pair_shell():
+    _, adapter = onboard(objects())
+    print("Put both AirPods in the open case and double-tap the front until the light flashes white.")
+    print("In bluetoothctl, use these commands with the AirPods address shown by discovery:")
+    print(f"select {adapter['Address']}\ndefault-agent\nscan on\npair <AIRPODS_ADDRESS>\n"
+          "trust <AIRPODS_ADDRESS>\nconnect <AIRPODS_ADDRESS>\nscan off\nquit")
+    if sys.stdin.isatty():
+        subprocess.run(["bluetoothctl", "--agent", "NoInputNoOutput"], check=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("status", "stereo", "calls", "meter", "transport-log", "pair-shell"))
+    parser.add_argument("--codec", choices=("sbc", "sbc_xq_453", "sbc_xq_512", "sbc_xq_552"))
+    parser.add_argument("--seconds", type=int, default=10)
+    args = parser.parse_args()
+    if not 1 <= args.seconds <= 60:
+        parser.error("--seconds must be between 1 and 60")
+    if args.codec and args.action != "stereo":
+        parser.error("--codec applies only to stereo")
+    if args.action == "status":
+        status()
+    elif args.action in ("stereo", "calls"):
+        configure(args.action, args.codec)
+    elif args.action == "meter":
+        meter(args.seconds)
+    elif args.action == "transport-log":
+        transport_log(args.seconds)
+    else:
+        pair_shell()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        raise SystemExit(str(error))

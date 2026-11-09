@@ -1,0 +1,23 @@
+#!/usr/bin/python3
+"""Restore the most recent installation without deleting pairing data."""
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+root = Path(__file__).resolve().parents[1]
+manifest = json.loads((root / "local/install-manifest.json").read_text())
+subprocess.run(["systemctl", "--user", "stop", "airpods-xfce-tray.service", "librepods.service"], check=False)
+subprocess.run(["systemctl", "--user", "disable", "librepods.service"], check=False)
+for entry in reversed(manifest):
+    destination = Path(entry["path"])
+    if destination.is_file() and hashlib.sha256(destination.read_bytes()).hexdigest() != entry["sha256"]:
+        print(f"Keeping modified file: {destination}")
+        continue
+    if entry["backup"]:
+        shutil.copy2(entry["backup"], destination)
+    else:
+        destination.unlink(missing_ok=True)
+subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+print("Installation removed. Pairing data and Debian packages were retained.")

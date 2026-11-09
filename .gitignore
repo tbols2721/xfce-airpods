@@ -1,0 +1,12 @@
+/build/
+/local/
+__pycache__/
+*.pyc
+*.log
+/docs/machine-state.json
+*.zip
+*.deb
+*.bin
+*.ko
+*.ko.xz
+*.ko.zst

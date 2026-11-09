@@ -1,0 +1,10 @@
+{
+  "librepods-upstream": {
+    "url": "https://github.com/librepods-org/librepods.git",
+    "commit": "89356c08cea3db0b6b54792d9329d09a87cc85fa"
+  },
+  "omarchy-pods": {
+    "url": "https://github.com/thisisgm/omarchy-pods.git",
+    "commit": "fff7fec600a5b9a61cdb40e93eccbcceb4b8f824"
+  }
+}
