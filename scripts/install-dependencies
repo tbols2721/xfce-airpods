@@ -9,7 +9,8 @@ packages=(
     qml6-module-qtquick qml6-module-qtquick-controls
     qml6-module-qtquick-templates qml6-module-qtquick-layouts
     qml6-module-qtquick-window qml6-module-qtqml-workerscript
-    python3-gi gir1.2-gtk-3.0 xfce4-genmon-plugin
+    python3-gi python3-dbus gir1.2-gtk-3.0 xfce4-genmon-plugin
+    bluez pulseaudio-utils blueman pavucontrol patch
 )
 
 sudo apt-get update

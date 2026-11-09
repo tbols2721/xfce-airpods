@@ -2,7 +2,7 @@
 
 The AirPods protocol implementation is the work of **Kavish Devar** and the
 [LibrePods project](https://github.com/librepods-org/librepods). It is the
-foundation of this setup.
+foundation of this integration.
 
 The active daemon comes from **GM / thisisgm** and
 [omarchy-pods](https://github.com/thisisgm/omarchy-pods). That project bundles a
@@ -30,7 +30,7 @@ code, [Javier Tia / jetm's MT7927 work](https://github.com/jetm/mediatek-mt7927-
 and the board-specific investigation in
 [shaunstanislauslau/x870e-hero-linux-bluetooth-fix](https://github.com/shaunstanislauslau/x870e-hero-linux-bluetooth-fix).
 The firmware container layout was checked against jetm's extraction code.
-No third-party installer was executed.
+The preparation scripts download data directly and do not run third-party installers.
 
 The standalone motherboard fix is published at
 [tbols2721/asus-x870e-hero-bluetooth-fix](https://github.com/tbols2721/asus-x870e-hero-bluetooth-fix).

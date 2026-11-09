@@ -46,7 +46,7 @@ for source in sorted(stage.rglob("*")):
         install_bytes(home / ".local" / source.relative_to(stage), source.read_bytes(),
                       source.stat().st_mode & 0o777)
 
-# XFCE does not activate graphical-session.target on this machine.
+# Support XFCE sessions that do not activate graphical-session.target.
 service = (stage / "share/systemd/user/librepods.service").read_text()
 service = service.replace("After=graphical-session.target\nPartOf=graphical-session.target",
                           "After=dbus.socket")

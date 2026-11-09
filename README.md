@@ -1,36 +1,37 @@
-# AirPods Pro controls for XFCE
+# AirPods controls for XFCE
 
-This repository configures LibrePods and the control interface from
-[omarchy-pods](https://github.com/thisisgm/omarchy-pods) for Debian 13 with XFCE.
-The modified LibrePods daemon owns the Bluetooth control connection. A small
-GTK 3 application puts its battery readings and controls in the existing XFCE
-notification area. The application watches the daemon's status file and starts
-the control command only when a setting changes.
+An XFCE tray menu for AirPods battery readings, listening modes, and device
+controls. This project builds the modified LibrePods daemon from
+[omarchy-pods](https://github.com/thisisgm/omarchy-pods) and adds a native GTK 3
+interface for XFCE's notification area. It does not require the Omarchy desktop
+shell or its QML panel.
 
-The Omarchy QML panel depends on Omarchy's desktop shell. This repository uses
-the same daemon interface through a native XFCE tray menu. It runs one daemon
-in headless mode, with a separate tray process.
+The daemon maintains the AirPods control connection. The tray reads its status
+file and sends commands when a setting changes. Ordinary playback and microphone
+capture use the system's existing audio and Bluetooth stack.
 
-Both source repositories are pinned Git submodules:
+## Requirements and scope
 
-| Source | Role |
-| --- | --- |
-| `vendor/omarchy-pods` | Modified daemon with Pro 3 support, status JSON, and control commands |
-| `vendor/librepods-upstream` | Upstream LibrePods source for comparison and future updates |
+The tested configuration is Debian 13 amd64, XFCE 4.20 on X11, BlueZ 5.82,
+PulseAudio 17.0, and AirPods Pro 3. Other configurations have not been validated.
+The dependency installer uses Debian package names and requires sudo access.
+The tray requires an XFCE notification area and a graphical user session.
 
-The pinned source revisions are recorded in `sources.lock.json`. The daemon
-sources are unchanged. Their licenses remain in their respective submodules.
+Basic Bluetooth pairing and audio must work before installing the controls.
+Pair and trust the AirPods in Blueman, then confirm playback through the intended
+adapter. For an ASUS ROG Crosshair X870E Hero with an uninitialized MediaTek
+MT7927/MT6639 adapter, see the separate
+[motherboard fix](https://github.com/tbols2721/asus-x870e-hero-bluetooth-fix).
+Its privileged scripts apply only to that board and two exact Debian kernel
+ABIs. The tray itself does not require that motherboard.
 
 ## Installation
 
-From a fresh checkout, initialize the source repositories and install the Debian
-build dependencies. The dependency installer requires sudo authentication.
-It prevents package removals and retains the existing audio server.
+Install Git if needed, then clone the project with its pinned source submodules:
 
 ```bash
 git clone --recurse-submodules https://github.com/tbols2721/xfce-airpods.git
 cd xfce-airpods
-git submodule update --init --recursive
 ./scripts/install-dependencies
 ./scripts/build
 ./scripts/install
@@ -38,86 +39,80 @@ systemctl --user enable --now librepods.service
 ~/.local/bin/airpods-xfce start
 ```
 
-The build runs the daemon's CTest suite and the XFCE status tests before staging
-the installation. Files go into `~/.local`, with an XFCE autostart entry under
-`~/.config/autostart`. Original files and the installation manifest stay under
-the ignored `local/` directory in this repository. Keep that directory to retain
-the uninstall information.
+Run these commands as your desktop user. The dependency script invokes sudo
+for APT; do not run the build or user-level installer as root. Review the
+scripts before running them. The dependency installer prevents package removals
+and does not replace the audio server.
 
-The onboard MT7927/MT6639 adapter needs additional support on this machine.
-See [the firmware procedure](docs/mt6639-firmware.md) and
-[the tested device-ID correction](docs/mt6639-driver.md). These procedures are
-separate from the tray installation and use the two recorded Debian kernel ABIs.
+The build runs 19 daemon CTest tests and six tray-status tests before staging
+the installation. Files are installed under `~/.local`, with an XFCE autostart
+entry under `~/.config/autostart`. Original files and the restore manifest stay
+under ignored `local/` in the checkout. Keep that directory for uninstallation.
 
-The supplied daemon unit normally starts through `graphical-session.target`.
-This machine does not activate that target, so the installer changes its
-startup target to `default.target`. The original daemon hardening remains in
-place. XFCE autostart imports the display environment and starts the tray unit.
+The installer adapts the daemon unit to `default.target` because some XFCE
+sessions do not activate `graphical-session.target`. XFCE autostart imports the
+display environment and starts the tray unit. Wear both AirPods for the initial
+control-link check, and avoid running another LibrePods instance concurrently.
 
-Pair the AirPods through Blueman. Wear both AirPods for the first control-link
-test. Initial pairing can require several connection attempts while Bluetooth
-service discovery completes. Trust the paired device in Blueman to support
-later reconnection.
-
-## Controls
+## Controls and audio
 
 Click the headphone icon in the notification area, or launch **AirPods Pro
-controls** from the application menu. The menu shows separate left, right, and
-case battery readings. Unknown readings remain labeled **Unknown**.
+controls** from the application menu. The menu displays left, right, and case
+battery readings. Unknown readings remain labeled **Unknown**. Case battery
+depends on the last case packet received and may remain unknown while the
+AirPods are being worn.
 
-The connected device's capability flags determine which controls appear:
-noise cancellation, transparency, adaptive listening, adaptive noise level,
+The device's capability flags determine which controls appear: noise
+cancellation, transparency, adaptive listening, adaptive noise level,
 conversation awareness, noise cancellation with one AirPod, and ear detection.
 For the tested Pro 3, the daemon excludes the Off listening mode. GTK supplies
-keyboard navigation through the menu and its submenus.
+keyboard navigation through the menu and submenus.
 
-Case battery can remain unknown while the AirPods are being worn. Its value
-depends on the last case packet received. The daemon pauses BLE scanning while
-the control link is connected to avoid the audio interference documented by
-omarchy-pods.
-
-The daemon selects the playback profile available from the current audio
-server. This machine uses PulseAudio 17 and exposes SBC and SBC XQ stereo
-codecs. The user confirmed clear stereo playback through the corrected onboard
-adapter using standard SBC. Microphone input was separately verified at 16 kHz
-in the hands-free profile. Stereo playback was restored after that test.
+The daemon pauses BLE scanning while its control link is connected, following
+omarchy-pods' audio-interference handling. On the tested PulseAudio stack, A2DP
+provides stereo playback and the hands-free profile provides microphone input
+with call-quality playback. Select the appropriate profile in your audio
+settings. The [operations guide](docs/operations.md) covers profile selection
+and microphone checks, including the optional MediaTek-specific terminal helper.
 
 ```bash
 ~/.local/bin/airpods-xfce menu
 ~/.local/bin/airpods-xfce status
-~/.local/bin/librepods-ctl status
 systemctl --user status librepods.service airpods-xfce-tray.service
+```
+
+## Troubleshooting and removal
+
+Check service logs locally when the tray or daemon does not start:
+
+```bash
 journalctl --user -u librepods.service -u airpods-xfce-tray.service
 ```
 
-Pairing keys stay in `~/.config/AirPodsTrayApp`, outside this repository. The
-daemon creates that directory with mode 0700 and its settings file with mode
-0600. Status files and the control socket also have owner-only access. Do not
-commit machine settings or raw Bluetooth logs.
+Logs and full daemon status can contain device names, addresses, and local
+paths. Pairing keys live outside the checkout in `~/.config/AirPodsTrayApp`.
+Read [PRIVACY.md](PRIVACY.md) before sharing diagnostics or committing files.
 
-## Verification and removal
-
-See `docs/validation.md` for the checks completed on this machine and the
-remaining physical tests. Local hardware-test results are stored in the
-ignored `local/` directory.
-
-The [setup report](docs/setup-report.md) explains the architecture, investigation,
-and fix. The [operations guide](docs/operations.md) documents pairing, profile
-selection, microphone metering, and bounded transport captures. The complete
-terminal helper is `scripts/airpods-tools`.
-
-See [NOTICE.md](NOTICE.md) for credits to Kavish Devar and LibrePods, GM and
-omarchy-pods, and the Linux and MT7927 contributors. Component licenses remain
-with their sources. Public copies are available as
-[xfce-airpods](https://github.com/tbols2721/xfce-airpods) and the standalone
-[motherboard fix](https://github.com/tbols2721/asus-x870e-hero-bluetooth-fix).
-
-To remove the integration, run:
+To remove the integration:
 
 ```bash
 ./scripts/uninstall
 ```
 
-This stops the services and restores files from before the initial installation.
-It keeps files that have changed since installation and reports their paths.
-Pairing data and Debian packages are retained.
+This stops the services and restores files saved before the initial installation.
+It retains subsequently modified files and reports their paths. Pairing data
+and Debian packages are retained. Optional motherboard firmware and driver
+changes have [separate removal procedures](docs/mt6639-driver.md).
+
+## Technical documentation and credits
+
+- [Architecture](docs/architecture.md): control and audio paths, services, and hardware support.
+- [Operations](docs/operations.md): pairing, audio profiles, microphone metering, and diagnostics.
+- [Validation](docs/validation.md): tested configuration, evidence, and remaining checks.
+- [Motherboard firmware](docs/mt6639-firmware.md) and [driver](docs/mt6639-driver.md): optional hardware procedures.
+- [Credits and licenses](NOTICE.md): LibrePods, omarchy-pods, and Linux/MT7927 contributors.
+
+Both source repositories are pinned Git submodules; exact revisions are in
+[`sources.lock.json`](sources.lock.json). `vendor/omarchy-pods` supplies the
+active daemon, while `vendor/librepods-upstream` is a reference copy. Their
+sources and license notices are retained unchanged.
